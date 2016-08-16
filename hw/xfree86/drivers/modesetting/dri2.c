@@ -123,6 +123,7 @@ ms_dri2_create_buffer2(ScreenPtr screen, DrawablePtr drawable,
                        unsigned int attachment, unsigned int format)
 {
     ScrnInfoPtr scrn = xf86ScreenToScrn(screen);
+    modesettingPtr ms = modesettingPTR(scrn);
     DRI2Buffer2Ptr buffer;
     PixmapPtr pixmap;
     CARD32 size;
@@ -152,6 +153,7 @@ ms_dri2_create_buffer2(ScreenPtr screen, DrawablePtr drawable,
         int pixmap_width = drawable->width;
         int pixmap_height = drawable->height;
         int pixmap_cpp = (format != 0) ? format : drawable->depth;
+        int flags = 0;
 
         /* Assume that non-color-buffers require special
          * device-specific handling.  Mesa currently makes no requests
@@ -180,11 +182,34 @@ ms_dri2_create_buffer2(ScreenPtr screen, DrawablePtr drawable,
             return NULL;
         }
 
+        /* We're trying to allocate a back buffer which may be used to flip
+         * the front buffer when DRI2SwapBuffer. For different render/display
+         * settings, this back buffer should be linear too as the front buffer.
+         */
+        if (ms->rfd >= 0 &&
+            attachment == DRI2BufferBackLeft &&
+            drawable->type == DRAWABLE_WINDOW &&
+            ms->drmmode.pageflip &&
+            scrn->vtSema) {
+            PixmapPtr pWinPixmap = get_drawable_pixmap(drawable);
+
+            /* drawable window must match screen pixmap.
+             * We could use DRI2CanFlip but currently the window clipList
+             * has not been set by XFixes request yet.
+             */
+            if (pWinPixmap == screen->GetScreenPixmap(screen) &&
+                drawable->x == 0 && drawable->y == 0 &&
+                drawable->width == pWinPixmap->drawable.width &&
+                drawable->height == pWinPixmap->drawable.height) {
+                flags |= CREATE_PIXMAP_USAGE_SHARED;
+            }
+        }
+
         pixmap = screen->CreatePixmap(screen,
                                       pixmap_width,
                                       pixmap_height,
                                       pixmap_cpp,
-                                      0);
+                                      flags);
         if (pixmap == NULL) {
             free(private);
             free(buffer);
@@ -536,7 +561,6 @@ can_exchange(ScrnInfoPtr scrn, DrawablePtr draw,
     xf86CrtcConfigPtr config = XF86_CRTC_CONFIG_PTR(scrn);
     int num_crtcs_on = 0;
     int i;
-    modesettingPtr ms = modesettingPTR(scrn);
 
     for (i = 0; i < config->num_crtc; i++) {
         drmmode_crtc_private_ptr drmmode_crtc = config->crtc[i]->driver_private;
@@ -571,9 +595,6 @@ can_exchange(ScrnInfoPtr scrn, DrawablePtr draw,
         return FALSE;
 
     if (front_pixmap->devKind != back_pixmap->devKind)
-        return FALSE;
-
-    if (ms->rfd >= 0)
         return FALSE;
 
     return TRUE;
