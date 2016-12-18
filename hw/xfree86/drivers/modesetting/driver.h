@@ -53,6 +53,7 @@ typedef enum {
     OPTION_PAGEFLIP,
     OPTION_ZAPHOD_HEADS,
     OPTION_DOUBLE_SHADOW,
+    OPTION_ALL_IN_ONE,
 } modesettingOpts;
 
 typedef struct

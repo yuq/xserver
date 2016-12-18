@@ -130,6 +130,7 @@ static const OptionInfoRec Options[] = {
     {OPTION_PAGEFLIP, "PageFlip", OPTV_BOOLEAN, {0}, FALSE},
     {OPTION_ZAPHOD_HEADS, "ZaphodHeads", OPTV_STRING, {0}, FALSE},
     {OPTION_DOUBLE_SHADOW, "DoubleShadow", OPTV_BOOLEAN, {0}, FALSE},
+    {OPTION_ALL_IN_ONE, "AllInOne", OPTV_BOOLEAN, {0}, FALSE},
     {-1, NULL, OPTV_NONE, {0}, FALSE}
 };
 
@@ -413,15 +414,33 @@ ms_platform_probe(DriverPtr driver,
         scr_flags = XF86_ALLOCATE_GPU_SCREEN;
 
     if (probe_hw(path, dev)) {
-        scrn = xf86AllocateScreen(driver, scr_flags);
+        static ScrnInfoPtr scrn_all = NULL;
+        const char *all_in_one_str;
+        Bool all_in_one;
+        GDevPtr devSection = xf86GetDevFromEntity(
+            entity_num, xf86GetNumEntityInstances(entity_num) - 1);
+
+        all_in_one_str = xf86FindOptionValue(devSection->options, "AllInOne");
+        if (xf86getBoolValue(&all_in_one, all_in_one_str) && all_in_one) {
+            if (!scrn_all) {
+                scrn_all = xf86AllocateScreen(driver, 0);
+                ms_setup_scrn_hooks(scrn_all);
+            }
+            scrn = scrn_all;
+        }
+        else {
+            scrn = xf86AllocateScreen(driver, scr_flags);
+            ms_setup_scrn_hooks(scrn);
+        }
+
         if (xf86IsEntitySharable(entity_num))
             xf86SetEntityShared(entity_num);
         xf86AddEntityToScreen(scrn, entity_num);
 
-        ms_setup_scrn_hooks(scrn);
-
         xf86DrvMsg(scrn->scrnIndex, X_INFO,
-                   "using drv %s\n", path ? path : "default device");
+                   "using drv %s, all in one: %s\n",
+                   path ? path : "default device",
+                   scrn_all ? "enabled" : "disabled");
 
         ms_setup_entity(scrn, entity_num);
     }
@@ -885,7 +904,7 @@ PreInit(ScrnInfoPtr pScrn, int flags)
     int bppflags, connector_count;
     int defaultdepth, defaultbpp;
 
-    if (pScrn->numEntities != 1)
+    if (pScrn->numEntities <= 0)
         return FALSE;
 
     pEnt = xf86GetEntityInfo(pScrn->entityList[0]);
