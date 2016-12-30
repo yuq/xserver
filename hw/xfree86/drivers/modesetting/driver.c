@@ -419,6 +419,7 @@ ms_platform_probe(DriverPtr driver,
         Bool all_in_one;
         GDevPtr devSection = xf86GetDevFromEntity(
             entity_num, xf86GetNumEntityInstances(entity_num) - 1);
+        modesettingEntPtr ms_ent;
 
         all_in_one_str = xf86FindOptionValue(devSection->options, "AllInOne");
         if (xf86getBoolValue(&all_in_one, all_in_one_str) && all_in_one) {
@@ -443,6 +444,9 @@ ms_platform_probe(DriverPtr driver,
                    scrn_all ? "enabled" : "disabled");
 
         ms_setup_entity(scrn, entity_num);
+
+        ms_ent = xf86GetEntityPrivate(entity_num, ms_entity_index)->ptr;
+        ms_ent->is_primary = !(flags & PLATFORM_PROBE_GPU_SCREEN);
     }
 
     return scrn != NULL;
@@ -903,11 +907,31 @@ PreInit(ScrnInfoPtr pScrn, int flags)
     int ret;
     int bppflags, connector_count;
     int defaultdepth, defaultbpp;
+    int primary_entity = -1;
 
     if (pScrn->numEntities <= 0)
         return FALSE;
+    else if (pScrn->numEntities > 1) {
+        int i;
 
-    pEnt = xf86GetEntityInfo(pScrn->entityList[0]);
+        for (i = 0; i < pScrn->numEntities; i++) {
+            modesettingEntPtr ms_ent = xf86GetEntityPrivate(
+                pScrn->entityList[i], ms_entity_index)->ptr;
+            if (ms_ent->is_primary) {
+                primary_entity = pScrn->entityList[i];
+                break;
+            }
+        }
+
+        if (primary_entity == -1) {
+            xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "all in one: no primary entity\n");
+            return FALSE;
+        }
+    }
+    else
+        primary_entity = pScrn->entityList[0];
+
+    pEnt = xf86GetEntityInfo(primary_entity);
 
     if (flags & PROBE_DETECT) {
         return FALSE;
@@ -923,11 +947,11 @@ PreInit(ScrnInfoPtr pScrn, int flags)
     ms->drmmode.is_secondary = FALSE;
     pScrn->displayWidth = 640;  /* default it */
 
-    if (xf86IsEntityShared(pScrn->entityList[0])) {
-        if (xf86IsPrimInitDone(pScrn->entityList[0]))
+    if (xf86IsEntityShared(primary_entity)) {
+        if (xf86IsPrimInitDone(primary_entity))
             ms->drmmode.is_secondary = TRUE;
         else
-            xf86SetPrimInitDone(pScrn->entityList[0]);
+            xf86SetPrimInitDone(primary_entity);
     }
 
     pScrn->monitor = pScrn->confScreen->monitor;
