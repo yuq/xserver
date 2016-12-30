@@ -714,6 +714,26 @@ msBlockHandler_oneshot(ScreenPtr pScreen, void *pTimeout)
 }
 
 static void
+ms_free_ent(EntityInfoPtr pEnt)
+{
+    modesettingEntPtr ms_ent;
+
+    ms_ent = xf86GetEntityPrivate(pEnt->index, ms_entity_index)->ptr;
+    ms_ent->fd_ref--;
+    if (!ms_ent->fd_ref) {
+        if (pEnt->location.type == BUS_PCI)
+            drmClose(ms_ent->fd);
+        else
+#ifdef XF86_PDEV_SERVER_FD
+        if (!(pEnt->location.type == BUS_PLATFORM &&
+              (pEnt->location.id.plat->flags & XF86_PDEV_SERVER_FD)))
+#endif
+            close(ms_ent->fd);
+        ms_ent->fd = 0;
+    }
+}
+
+static void
 FreeRec(ScrnInfoPtr pScrn)
 {
     modesettingPtr ms;
@@ -725,29 +745,14 @@ FreeRec(ScrnInfoPtr pScrn)
     if (!ms)
         return;
 
-    if (ms->fd > 0) {
-        modesettingEntPtr ms_ent;
-        int ret;
+    if (ms->fd >= 0)
+        ms_free_ent(ms->pEnt);
+    if (ms->rfd >= 0)
+        ms_free_ent(ms->prEnt);
 
-        ms_ent = ms_ent_priv(pScrn);
-        ms_ent->fd_ref--;
-        if (!ms_ent->fd_ref) {
-            if (ms->pEnt->location.type == BUS_PCI)
-                ret = drmClose(ms->fd);
-            else
-#ifdef XF86_PDEV_SERVER_FD
-                if (!(ms->pEnt->location.type == BUS_PLATFORM &&
-                      (ms->pEnt->location.id.plat->flags & XF86_PDEV_SERVER_FD)))
-#endif
-                    ret = close(ms->fd);
-            (void) ret;
-            ms_ent->fd = 0;
-        }
-    }
     pScrn->driverPrivate = NULL;
     free(ms->drmmode.Options);
     free(ms);
-
 }
 
 static void
@@ -903,6 +908,16 @@ ms_get_drm_master_fd(ScrnInfoPtr pScrn)
     if (ms->fd < 0)
         return FALSE;
 
+    ms->rfd = -1;
+    if (ms->prEnt) {
+        ms->rfd = ms_entity_get_drm_master_fd(pScrn, ms->prEnt);
+        if (ms->rfd < 0)
+            xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "all in one: rfd open fail\n");
+        else
+            xf86DrvMsg(pScrn->scrnIndex, X_INFO, "all in one: fd=%d rfd=%d\n",
+                       ms->fd, ms->rfd);
+    }
+
     return TRUE;
 }
 
@@ -916,7 +931,7 @@ PreInit(ScrnInfoPtr pScrn, int flags)
     int ret;
     int bppflags, connector_count;
     int defaultdepth, defaultbpp;
-    int primary_entity = -1;
+    int primary_entity = -1, render_entity = -1;
 
     if (pScrn->numEntities <= 0)
         return FALSE;
@@ -926,10 +941,10 @@ PreInit(ScrnInfoPtr pScrn, int flags)
         for (i = 0; i < pScrn->numEntities; i++) {
             modesettingEntPtr ms_ent = xf86GetEntityPrivate(
                 pScrn->entityList[i], ms_entity_index)->ptr;
-            if (ms_ent->is_primary) {
+            if (ms_ent->is_primary)
                 primary_entity = pScrn->entityList[i];
-                break;
-            }
+            else
+                render_entity = pScrn->entityList[i];
         }
 
         if (primary_entity == -1) {
@@ -962,6 +977,11 @@ PreInit(ScrnInfoPtr pScrn, int flags)
         else
             xf86SetPrimInitDone(primary_entity);
     }
+
+    if (render_entity != -1)
+        ms->prEnt = xf86GetEntityInfo(render_entity);
+    else
+        ms->prEnt = NULL;
 
     pScrn->monitor = pScrn->confScreen->monitor;
     pScrn->progClock = TRUE;
@@ -1540,23 +1560,31 @@ msSharedPixmapNotifyDamage(PixmapPtr ppix)
 }
 
 static Bool
-SetMaster(ScrnInfoPtr pScrn)
+ms_set_master(ScrnInfoPtr pScrn, EntityInfoPtr pEnt, int fd)
 {
-    modesettingPtr ms = modesettingPTR(pScrn);
     int ret;
-
+    
 #ifdef XF86_PDEV_SERVER_FD
-    if (ms->pEnt->location.type == BUS_PLATFORM &&
-        (ms->pEnt->location.id.plat->flags & XF86_PDEV_SERVER_FD))
+    if (pEnt->location.type == BUS_PLATFORM &&
+        (pEnt->location.id.plat->flags & XF86_PDEV_SERVER_FD))
         return TRUE;
 #endif
 
-    ret = drmSetMaster(ms->fd);
+    ret = drmSetMaster(fd);
     if (ret)
         xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "drmSetMaster failed: %s\n",
                    strerror(errno));
 
     return ret == 0;
+}
+
+static Bool
+SetMaster(ScrnInfoPtr pScrn)
+{
+    modesettingPtr ms = modesettingPTR(pScrn);
+
+    return ms_set_master(pScrn, ms->pEnt, ms->fd) &&
+        (ms->rfd < 0 || ms_set_master(pScrn, ms->prEnt, ms->rfd));
 }
 
 /* When the root window is created, initialize the screen contents from
@@ -1790,6 +1818,18 @@ FreeScreen(ScrnInfoPtr pScrn)
 }
 
 static void
+ms_drop_master(EntityInfoPtr pEnt, int fd)
+{
+#ifdef XF86_PDEV_SERVER_FD
+    if (pEnt->location.type == BUS_PLATFORM &&
+        (pEnt->location.id.plat->flags & XF86_PDEV_SERVER_FD))
+        return;
+#endif
+
+    drmDropMaster(fd);
+}
+
+static void
 LeaveVT(ScrnInfoPtr pScrn)
 {
     modesettingPtr ms = modesettingPTR(pScrn);
@@ -1798,13 +1838,9 @@ LeaveVT(ScrnInfoPtr pScrn)
 
     pScrn->vtSema = FALSE;
 
-#ifdef XF86_PDEV_SERVER_FD
-    if (ms->pEnt->location.type == BUS_PLATFORM &&
-        (ms->pEnt->location.id.plat->flags & XF86_PDEV_SERVER_FD))
-        return;
-#endif
-
-    drmDropMaster(ms->fd);
+    ms_drop_master(ms->pEnt, ms->fd);
+    if (ms->rfd >= 0)
+        ms_drop_master(ms->prEnt, ms->rfd);
 }
 
 /*

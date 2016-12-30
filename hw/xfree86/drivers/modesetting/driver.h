@@ -88,9 +88,11 @@ struct ms_drm_queue {
 
 typedef struct _modesettingRec {
     int fd;
+    int rfd;
 
     int Chipset;
     EntityInfoPtr pEnt;
+    EntityInfoPtr prEnt;
 
     Bool noAccel;
     CloseScreenProcPtr CloseScreen;
