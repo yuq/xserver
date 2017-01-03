@@ -272,6 +272,10 @@ ms_present_check_flip(RRCrtcPtr crtc,
     if (pixmap->devKind != drmmode_bo_get_pitch(&ms->drmmode.front_bo))
         return FALSE;
 
+    /* can't flip to a user created bo with tile */
+    if (ms->rfd >= 0)
+        return FALSE;
+
     /* Make sure there's a bo we can get to */
     /* XXX: actually do this.  also...is it sufficient?
      * if (!glamor_get_pixmap_private(pixmap))

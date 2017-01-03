@@ -97,6 +97,10 @@ drmmode_bo_destroy(drmmode_ptr drmmode, drmmode_bo *bo)
         gbm_bo_destroy(bo->gbm);
         bo->gbm = NULL;
     }
+    if (bo->rgbm) {
+        gbm_bo_destroy(bo->rgbm);
+        bo->rgbm = NULL;
+    }
 #endif
 
     if (bo->dumb) {
@@ -167,9 +171,29 @@ drmmode_create_bo(drmmode_ptr drmmode, drmmode_bo *bo,
 {
 #ifdef GLAMOR_HAS_GBM
     if (drmmode->glamor) {
+        int usage = GBM_BO_USE_RENDERING | GBM_BO_USE_SCANOUT;
+        if (drmmode->rgbm)
+            usage |= GBM_BO_USE_LINEAR;
         bo->gbm = gbm_bo_create(drmmode->gbm, width, height,
-                                GBM_FORMAT_ARGB8888,
-                                GBM_BO_USE_RENDERING | GBM_BO_USE_SCANOUT);
+                                GBM_FORMAT_ARGB8888, usage);
+        bo->rgbm = NULL;
+        if (drmmode->rgbm && bo->gbm) {
+            int fd = gbm_bo_get_fd(bo->gbm);
+            if (fd >= 0) {
+                struct gbm_import_fd_data import_data = { 0 };
+                import_data.fd = fd;
+                import_data.width = gbm_bo_get_width(bo->gbm);
+                import_data.height = gbm_bo_get_height(bo->gbm);
+                import_data.stride = gbm_bo_get_stride(bo->gbm);
+                import_data.format = gbm_bo_get_format(bo->gbm);
+                bo->rgbm = gbm_bo_import(drmmode->rgbm, GBM_BO_IMPORT_FD, &import_data, 0);
+                close(fd);
+            }
+            if (!bo->rgbm) {
+                gbm_bo_destroy(bo->gbm);
+                bo->gbm = NULL;
+            }
+        }
         return bo->gbm != NULL;
     }
 #endif
@@ -189,7 +213,32 @@ drmmode_bo_for_pixmap(drmmode_ptr drmmode, drmmode_bo *bo, PixmapPtr pixmap)
 
 #ifdef GLAMOR_HAS_GBM
     if (drmmode->glamor) {
-        bo->gbm = glamor_gbm_bo_from_pixmap(screen, pixmap);
+        struct gbm_bo *gbm = glamor_gbm_bo_from_pixmap(screen, pixmap);
+        if (!gbm)
+            bo->gbm = bo->rgbm = NULL;
+        else if (!drmmode->rgbm) {
+            bo->gbm = gbm;
+            bo->rgbm = NULL;
+        }
+        else {
+            bo->rgbm = gbm;
+            bo->gbm = NULL;
+            fd = gbm_bo_get_fd(bo->rgbm);
+            if (fd >= 0) {
+                struct gbm_import_fd_data import_data = { 0 };
+                import_data.fd = fd;
+                import_data.width = gbm_bo_get_width(bo->rgbm);
+                import_data.height = gbm_bo_get_height(bo->rgbm);
+                import_data.stride = gbm_bo_get_stride(bo->rgbm);
+                import_data.format = gbm_bo_get_format(bo->rgbm);
+                bo->gbm = gbm_bo_import(drmmode->gbm, GBM_BO_IMPORT_FD, &import_data, 0);
+                close(fd);
+            }
+            if (!bo->gbm) {
+                gbm_bo_destroy(bo->rgbm);
+                bo->rgbm = NULL;
+            }
+        }
         bo->dumb = NULL;
         return bo->gbm != NULL;
     }
@@ -1931,7 +1980,7 @@ drmmode_set_pixmap_bo(drmmode_ptr drmmode, PixmapPtr pixmap, drmmode_bo *bo)
         return TRUE;
 
 #ifdef GLAMOR_HAS_GBM
-    if (!glamor_egl_create_textured_pixmap_from_gbm_bo(pixmap, bo->gbm)) {
+    if (!glamor_egl_create_textured_pixmap_from_gbm_bo(pixmap, bo->rgbm ? bo->rgbm : bo->gbm)) {
         xf86DrvMsg(scrn->scrnIndex, X_ERROR, "Failed");
         return FALSE;
     }

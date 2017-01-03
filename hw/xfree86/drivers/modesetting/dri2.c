@@ -536,6 +536,7 @@ can_exchange(ScrnInfoPtr scrn, DrawablePtr draw,
     xf86CrtcConfigPtr config = XF86_CRTC_CONFIG_PTR(scrn);
     int num_crtcs_on = 0;
     int i;
+    modesettingPtr ms = modesettingPTR(scrn);
 
     for (i = 0; i < config->num_crtc; i++) {
         drmmode_crtc_private_ptr drmmode_crtc = config->crtc[i]->driver_private;
@@ -570,6 +571,9 @@ can_exchange(ScrnInfoPtr scrn, DrawablePtr draw,
         return FALSE;
 
     if (front_pixmap->devKind != back_pixmap->devKind)
+        return FALSE;
+
+    if (ms->rfd >= 0)
         return FALSE;
 
     return TRUE;
@@ -1085,9 +1089,9 @@ ms_dri2_screen_init(ScreenPtr screen)
     }
 
     memset(&info, '\0', sizeof(info));
-    info.fd = ms->fd;
+    info.fd = ms->rfd < 0 ? ms->fd : ms->rfd;
     info.driverName = NULL; /* Compat field, unused. */
-    info.deviceName = drmGetDeviceNameFromFd(ms->fd);
+    info.deviceName = drmGetDeviceNameFromFd(ms->rfd < 0 ? ms->fd : ms->rfd);
 
     info.version = 9;
     info.CreateBuffer = ms_dri2_create_buffer;

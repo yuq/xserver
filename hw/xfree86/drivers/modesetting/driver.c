@@ -745,10 +745,16 @@ FreeRec(ScrnInfoPtr pScrn)
     if (!ms)
         return;
 
+    if (ms->rfd >= 0) {
+#ifdef GLAMOR_HAS_GBM
+        if (ms->drmmode.gbm)
+            gbm_device_destroy(ms->drmmode.gbm);
+#endif
+        ms_free_ent(ms->prEnt);
+    }
+
     if (ms->fd >= 0)
         ms_free_ent(ms->pEnt);
-    if (ms->rfd >= 0)
-        ms_free_ent(ms->prEnt);
 
     pScrn->driverPrivate = NULL;
     free(ms->drmmode.Options);
@@ -778,7 +784,7 @@ try_enable_glamor(ScrnInfoPtr pScrn)
     }
 
     if (xf86LoadSubModule(pScrn, GLAMOR_EGL_MODULE_NAME)) {
-        if (glamor_egl_init(pScrn, ms->fd)) {
+        if (glamor_egl_init(pScrn, ms->rfd < 0 ? ms->fd : ms->rfd)) {
             xf86DrvMsg(pScrn->scrnIndex, X_INFO, "glamor initialized\n");
             ms->drmmode.glamor = TRUE;
         } else {
@@ -1619,8 +1625,18 @@ ScreenInit(ScreenPtr pScreen, int argc, char **argv)
         return FALSE;
 
 #ifdef GLAMOR_HAS_GBM
-    if (ms->drmmode.glamor)
-        ms->drmmode.gbm = glamor_egl_get_gbm_device(pScreen);
+    if (ms->drmmode.glamor) {
+        if (ms->rfd < 0) {
+            ms->drmmode.gbm = glamor_egl_get_gbm_device(pScreen);
+            ms->drmmode.rgbm = NULL;
+        }
+        else {
+            ms->drmmode.gbm = gbm_create_device(ms->fd);
+            if (!ms->drmmode.gbm)
+                return FALSE;
+            ms->drmmode.rgbm = glamor_egl_get_gbm_device(pScreen);
+        }
+    }
 #endif
 
     /* HW dependent - FIXME */

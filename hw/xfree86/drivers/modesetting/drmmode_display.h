@@ -40,6 +40,7 @@ typedef struct {
     struct dumb_bo *dumb;
 #ifdef GLAMOR_HAS_GBM
     struct gbm_bo *gbm;
+    struct gbm_bo *rgbm;
 #endif
 } drmmode_bo;
 
@@ -52,6 +53,7 @@ typedef struct {
     ScrnInfoPtr scrn;
 
     struct gbm_device *gbm;
+    struct gbm_device *rgbm;
 
 #ifdef CONFIG_UDEV_KMS
     struct udev_monitor *uevent_monitor;
