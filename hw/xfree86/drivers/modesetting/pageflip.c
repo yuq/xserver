@@ -238,9 +238,7 @@ ms_do_pageflip(ScreenPtr screen,
     struct ms_flipdata *flipdata;
     glamor_block_handler(screen);
 
-    new_front_bo.gbm = glamor_gbm_bo_from_pixmap(screen, new_front);
-    new_front_bo.dumb = NULL;
-    if (!new_front_bo.gbm) {
+    if (!drmmode_bo_for_pixmap(&ms->drmmode, &new_front_bo, new_front)) {
         xf86DrvMsg(scrn->scrnIndex, X_ERROR,
                    "Failed to get GBM bo for flip to new front.\n");
         return FALSE;
