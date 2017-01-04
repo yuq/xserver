@@ -259,6 +259,8 @@ ms_present_check_flip(RRCrtcPtr crtc,
         if (drmmode_crtc->rotate_bo.gbm)
             return FALSE;
 #endif
+        if (drmmode_crtc->rotate_bo.dumb)
+            return FALSE;
 
         if (ms_crtc_on(config->crtc[i]))
             num_crtcs_on++;

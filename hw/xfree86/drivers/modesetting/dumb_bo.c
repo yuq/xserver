@@ -37,6 +37,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <xf86drm.h>
 
 struct dumb_bo *
@@ -135,4 +136,14 @@ dumb_get_bo_from_fd(int fd, int handle, int pitch, int size)
     bo->pitch = pitch;
     bo->size = size;
     return bo;
+}
+
+int
+dumb_get_fd_from_bo(int fd, struct dumb_bo *bo)
+{
+    int prime_fd;
+
+    if (drmPrimeHandleToFD(fd, bo->handle, DRM_CLOEXEC, &prime_fd))
+        return -errno;
+    return prime_fd;
 }

@@ -171,30 +171,56 @@ drmmode_create_bo(drmmode_ptr drmmode, drmmode_bo *bo,
 {
 #ifdef GLAMOR_HAS_GBM
     if (drmmode->glamor) {
-        int usage = GBM_BO_USE_RENDERING | GBM_BO_USE_SCANOUT;
-        if (drmmode->rgbm)
-            usage |= GBM_BO_USE_LINEAR;
-        bo->gbm = gbm_bo_create(drmmode->gbm, width, height,
-                                GBM_FORMAT_ARGB8888, usage);
+        if (drmmode->gbm) {
+            int usage = GBM_BO_USE_RENDERING | GBM_BO_USE_SCANOUT;
+            if (drmmode->rgbm)
+                usage |= GBM_BO_USE_LINEAR;
+            bo->gbm = gbm_bo_create(drmmode->gbm, width, height,
+                                    GBM_FORMAT_ARGB8888, usage);
+            bo->dumb = NULL;
+        }
+        else {
+            bo->gbm = NULL;
+            bo->dumb = dumb_bo_create(drmmode->fd, width, height, bpp);
+        }
         bo->rgbm = NULL;
-        if (drmmode->rgbm && bo->gbm) {
-            int fd = gbm_bo_get_fd(bo->gbm);
+
+        if (drmmode->rgbm) {
+            int fd = -1;
+
+            if (bo->gbm)
+                fd = gbm_bo_get_fd(bo->gbm);
+            else if (bo->dumb)
+                fd = dumb_get_fd_from_bo(drmmode->fd, bo->dumb);
+
             if (fd >= 0) {
                 struct gbm_import_fd_data import_data = { 0 };
+
                 import_data.fd = fd;
-                import_data.width = gbm_bo_get_width(bo->gbm);
-                import_data.height = gbm_bo_get_height(bo->gbm);
-                import_data.stride = gbm_bo_get_stride(bo->gbm);
-                import_data.format = gbm_bo_get_format(bo->gbm);
+                import_data.width = width;
+                import_data.height = height;
+                import_data.format = GBM_FORMAT_ARGB8888;
+                if (bo->gbm)
+                    import_data.stride = gbm_bo_get_stride(bo->gbm);
+                else
+                    import_data.stride = bo->dumb->pitch;
+
                 bo->rgbm = gbm_bo_import(drmmode->rgbm, GBM_BO_IMPORT_FD, &import_data, 0);
                 close(fd);
             }
+
             if (!bo->rgbm) {
-                gbm_bo_destroy(bo->gbm);
-                bo->gbm = NULL;
+                if (bo->gbm) {
+                    gbm_bo_destroy(bo->gbm);
+                    bo->gbm = NULL;
+                }
+                if (bo->dumb) {
+                    dumb_bo_destroy(drmmode->fd, bo->dumb);
+                    bo->dumb = NULL;
+                }
             }
         }
-        return bo->gbm != NULL;
+        return bo->gbm != NULL || bo->dumb != NULL;
     }
 #endif
 
@@ -214,33 +240,44 @@ drmmode_bo_for_pixmap(drmmode_ptr drmmode, drmmode_bo *bo, PixmapPtr pixmap)
 #ifdef GLAMOR_HAS_GBM
     if (drmmode->glamor) {
         struct gbm_bo *gbm = glamor_gbm_bo_from_pixmap(screen, pixmap);
-        if (!gbm)
+        if (!gbm) {
             bo->gbm = bo->rgbm = NULL;
+            bo->dumb = NULL;
+        }
         else if (!drmmode->rgbm) {
             bo->gbm = gbm;
             bo->rgbm = NULL;
+            bo->dumb = NULL;
         }
         else {
             bo->rgbm = gbm;
             bo->gbm = NULL;
+            bo->dumb = NULL;
             fd = gbm_bo_get_fd(bo->rgbm);
             if (fd >= 0) {
-                struct gbm_import_fd_data import_data = { 0 };
-                import_data.fd = fd;
-                import_data.width = gbm_bo_get_width(bo->rgbm);
-                import_data.height = gbm_bo_get_height(bo->rgbm);
-                import_data.stride = gbm_bo_get_stride(bo->rgbm);
-                import_data.format = gbm_bo_get_format(bo->rgbm);
-                bo->gbm = gbm_bo_import(drmmode->gbm, GBM_BO_IMPORT_FD, &import_data, 0);
+                int stride = gbm_bo_get_stride(bo->rgbm);
+                int height = gbm_bo_get_height(bo->rgbm);
+                if (drmmode->gbm) {
+                    struct gbm_import_fd_data import_data = { 0 };
+                    import_data.fd = fd;
+                    import_data.width = gbm_bo_get_width(bo->rgbm);
+                    import_data.height = height;
+                    import_data.stride = stride;
+                    import_data.format = gbm_bo_get_format(bo->rgbm);
+                    bo->gbm = gbm_bo_import(drmmode->gbm, GBM_BO_IMPORT_FD,
+                                            &import_data, 0);
+                }
+                else
+                    bo->dumb = dumb_get_bo_from_fd(drmmode->fd, fd, stride,
+                                                   stride * height);
                 close(fd);
             }
-            if (!bo->gbm) {
+            if (!bo->gbm && !bo->dumb) {
                 gbm_bo_destroy(bo->rgbm);
                 bo->rgbm = NULL;
             }
         }
-        bo->dumb = NULL;
-        return bo->gbm != NULL;
+        return bo->gbm != NULL || bo->dumb != NULL;
     }
 #endif
 
@@ -1080,7 +1117,7 @@ drmmode_shadow_allocate(xf86CrtcPtr crtc, int width, int height)
     }
 
 #ifdef GLAMOR_HAS_GBM
-    if (drmmode->gbm)
+    if (drmmode->gbm && drmmode_crtc->rotate_bo.gbm)
         return drmmode_crtc->rotate_bo.gbm;
 #endif
     return drmmode_crtc->rotate_bo.dumb;

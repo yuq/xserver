@@ -1633,7 +1633,8 @@ ScreenInit(ScreenPtr pScreen, int argc, char **argv)
         else {
             ms->drmmode.gbm = gbm_create_device(ms->fd);
             if (!ms->drmmode.gbm)
-                return FALSE;
+                xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+                           "all in one: display node dosen't support GBM\n");
             ms->drmmode.rgbm = glamor_egl_get_gbm_device(pScreen);
         }
     }
