@@ -45,6 +45,8 @@
 #define DRV_ERROR(msg)	xf86DrvMsg(pScrn->scrnIndex, X_ERROR, msg);
 #define MS_LOGLEVEL_DEBUG 4
 
+extern Bool ms_all_in_one;
+
 typedef enum {
     OPTION_SW_CURSOR,
     OPTION_DEVICE_PATH,

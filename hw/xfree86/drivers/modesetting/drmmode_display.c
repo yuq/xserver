@@ -1877,7 +1877,7 @@ drmmode_output_init(ScrnInfoPtr pScrn, drmmode_ptr drmmode, drmModeResPtr mode_r
         }
     }
 
-    if (xf86IsEntityShared(pScrn->entityList[0])) {
+    if (xf86IsEntityShared(pScrn->entityList[0]) && !ms_all_in_one) {
         if ((s = xf86GetOptValString(drmmode->Options, OPTION_ZAPHOD_HEADS))) {
             if (!drmmode_zaphod_string_matches(pScrn, s, name))
                 goto out_free_encoders;
@@ -2189,12 +2189,12 @@ drmmode_pre_init(ScrnInfoPtr pScrn, drmmode_ptr drmmode, int cpp)
     xf86CrtcSetSizeRange(pScrn, 320, 200, mode_res->max_width,
                          mode_res->max_height);
     for (i = 0; i < mode_res->count_crtcs; i++)
-        if (!xf86IsEntityShared(pScrn->entityList[0]) ||
+        if ((!xf86IsEntityShared(pScrn->entityList[0]) || ms_all_in_one) ||
             (crtcs_needed && !(ms_ent->assigned_crtcs & (1 << i))))
             crtcs_needed -= drmmode_crtc_init(pScrn, drmmode, mode_res, i);
 
     /* All ZaphodHeads outputs provided with matching crtcs? */
-    if (xf86IsEntityShared(pScrn->entityList[0]) && (crtcs_needed > 0))
+    if (xf86IsEntityShared(pScrn->entityList[0]) && !ms_all_in_one && (crtcs_needed > 0))
         xf86DrvMsg(pScrn->scrnIndex, X_WARNING,
                    "%d ZaphodHeads crtcs unavailable. Some outputs will stay off.\n",
                    crtcs_needed);

@@ -155,6 +155,8 @@ static XF86ModuleVersionInfo VersRec = {
 
 _X_EXPORT XF86ModuleData modesettingModuleData = { &VersRec, Setup, NULL };
 
+Bool ms_all_in_one = FALSE;
+
 static void *
 Setup(void *module, void *opts, int *errmaj, int *errmin)
 {
@@ -241,7 +243,7 @@ check_outputs(int fd, int *count)
 }
 
 static Bool
-probe_hw(const char *dev, struct xf86_platform_device *platform_dev)
+probe_hw(const char *dev, struct xf86_platform_device *platform_dev, int *count)
 {
     int fd;
 
@@ -250,13 +252,13 @@ probe_hw(const char *dev, struct xf86_platform_device *platform_dev)
         fd = xf86_platform_device_odev_attributes(platform_dev)->fd;
         if (fd == -1)
             return FALSE;
-        return check_outputs(fd, NULL);
+        return check_outputs(fd, count);
     }
 #endif
 
     fd = open_hw(dev);
     if (fd != -1) {
-        int ret = check_outputs(fd, NULL);
+        int ret = check_outputs(fd, count);
 
         close(fd);
         return ret;
@@ -408,12 +410,12 @@ ms_platform_probe(DriverPtr driver,
 {
     ScrnInfoPtr scrn = NULL;
     const char *path = xf86_platform_device_odev_attributes(dev)->path;
-    int scr_flags = 0;
+    int scr_flags = 0, count = 0;
 
     if (flags & PLATFORM_PROBE_GPU_SCREEN)
         scr_flags = XF86_ALLOCATE_GPU_SCREEN;
 
-    if (probe_hw(path, dev)) {
+    if (probe_hw(path, dev, &count)) {
         static ScrnInfoPtr scrn_all = NULL;
         const char *all_in_one_str;
         Bool all_in_one;
@@ -423,9 +425,19 @@ ms_platform_probe(DriverPtr driver,
 
         all_in_one_str = xf86FindOptionValue(devSection->options, "AllInOne");
         if (xf86getBoolValue(&all_in_one, all_in_one_str) && all_in_one) {
+            ms_all_in_one = TRUE;
             if (!scrn_all) {
                 scrn_all = xf86AllocateScreen(driver, 0);
                 ms_setup_scrn_hooks(scrn_all);
+            }
+            /* a display capable GPUScreen should be created */
+            if (flags & PLATFORM_PROBE_GPU_SCREEN && count) {
+                scrn = xf86AllocateScreen(driver, scr_flags);
+                ms_setup_scrn_hooks(scrn);
+                if (xf86IsEntitySharable(entity_num))
+                    xf86SetEntityShared(entity_num);
+                xf86AddEntityToScreen(scrn, entity_num);
+                ms_setup_entity(scrn, entity_num);
             }
             scrn = scrn_all;
         }
@@ -477,7 +489,7 @@ Probe(DriverPtr drv, int flags)
     for (i = 0; i < numDevSections; i++) {
         int entity_num;
         dev = xf86FindOptionValue(devSections[i]->options, "kmsdev");
-        if (probe_hw(dev, NULL)) {
+        if (probe_hw(dev, NULL, NULL)) {
 
             entity_num = xf86ClaimFbSlot(drv, 0, devSections[i], TRUE);
             scrn = xf86ConfigFbEntity(scrn, 0, entity_num, NULL, NULL, NULL, NULL);
@@ -979,7 +991,7 @@ PreInit(ScrnInfoPtr pScrn, int flags)
 
     if (xf86IsEntityShared(primary_entity)) {
         if (xf86IsPrimInitDone(primary_entity))
-            ms->drmmode.is_secondary = TRUE;
+            ms->drmmode.is_secondary = !ms_all_in_one;
         else
             xf86SetPrimInitDone(primary_entity);
     }
