@@ -1089,6 +1089,8 @@ ms_dri2_screen_init(ScreenPtr screen)
     ScrnInfoPtr scrn = xf86ScreenToScrn(screen);
     modesettingPtr ms = modesettingPTR(scrn);
     DRI2InfoRec info;
+    const char *driverNames[2];
+    const char *driver;
 
     if (!glamor_supports_pixmap_import_export(screen)) {
         xf86DrvMsg(scrn->scrnIndex, X_WARNING,
@@ -1130,6 +1132,15 @@ ms_dri2_screen_init(ScreenPtr screen)
     /* These two will be filled in by dri2.c */
     info.numDrivers = 0;
     info.driverNames = NULL;
+
+    driver = xf86FindOptionValue(
+        ms->rfd < 0 ? ms->pEnt->device->options : ms->prEnt->device->options,
+        "RenderName");
+    if (driver) {
+        driverNames[0] = driverNames[1] = info.driverName = driver;
+        info.driverNames = driverNames;
+        info.numDrivers = 2;
+    }
 
     return DRI2ScreenInit(screen, &info);
 }
