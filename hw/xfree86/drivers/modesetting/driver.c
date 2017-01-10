@@ -829,31 +829,26 @@ msShouldDoubleShadow(ScrnInfoPtr pScrn, modesettingPtr ms)
 #define DRM_CAP_CURSOR_HEIGHT 0x9
 #endif
 
-static Bool
-ms_get_drm_master_fd(ScrnInfoPtr pScrn)
+static int
+ms_entity_get_drm_master_fd(ScrnInfoPtr pScrn, EntityInfoPtr pEnt)
 {
-    EntityInfoPtr pEnt;
-    modesettingPtr ms;
+    int ret;
     modesettingEntPtr ms_ent;
 
-    ms = modesettingPTR(pScrn);
-    ms_ent = ms_ent_priv(pScrn);
-
-    pEnt = ms->pEnt;
+    ms_ent = xf86GetEntityPrivate(pEnt->index, ms_entity_index)->ptr;
 
     if (ms_ent->fd) {
         xf86DrvMsg(pScrn->scrnIndex, X_INFO,
                    " reusing fd for second head\n");
-        ms->fd = ms_ent->fd;
         ms_ent->fd_ref++;
-        return TRUE;
+        return ms_ent->fd;
     }
 
 #if XSERVER_PLATFORM_BUS
     if (pEnt->location.type == BUS_PLATFORM) {
 #ifdef XF86_PDEV_SERVER_FD
         if (pEnt->location.id.plat->flags & XF86_PDEV_SERVER_FD)
-            ms->fd =
+            ret =
                 xf86_platform_device_odev_attributes(pEnt->location.id.plat)->
                 fd;
         else
@@ -862,7 +857,7 @@ ms_get_drm_master_fd(ScrnInfoPtr pScrn)
             char *path =
                 xf86_platform_device_odev_attributes(pEnt->location.id.plat)->
                 path;
-            ms->fd = open_hw(path);
+            ret = open_hw(path);
         }
     }
     else
@@ -872,28 +867,42 @@ ms_get_drm_master_fd(ScrnInfoPtr pScrn)
         char *BusID = NULL;
         struct pci_device *PciInfo;
 
-        PciInfo = xf86GetPciInfoForEntity(ms->pEnt->index);
+        PciInfo = xf86GetPciInfoForEntity(pEnt->index);
         if (PciInfo) {
             BusID = XNFalloc(64);
             sprintf(BusID, "PCI:%d:%d:%d",
                     ((PciInfo->domain << 8) | PciInfo->bus),
                     PciInfo->dev, PciInfo->func);
         }
-        ms->fd = drmOpen(NULL, BusID);
+        ret = drmOpen(NULL, BusID);
         free(BusID);
     }
     else
 #endif
     {
         const char *devicename;
-        devicename = xf86FindOptionValue(ms->pEnt->device->options, "kmsdev");
-        ms->fd = open_hw(devicename);
+        devicename = xf86FindOptionValue(pEnt->device->options, "kmsdev");
+        ret = open_hw(devicename);
     }
+    if (ret < 0)
+        return ret;
+
+    ms_ent->fd = ret;
+    ms_ent->fd_ref = 1;
+    return ret;
+}
+
+static Bool
+ms_get_drm_master_fd(ScrnInfoPtr pScrn)
+{
+    modesettingPtr ms;
+
+    ms = modesettingPTR(pScrn);
+
+    ms->fd = ms_entity_get_drm_master_fd(pScrn, ms->pEnt);
     if (ms->fd < 0)
         return FALSE;
 
-    ms_ent->fd = ms->fd;
-    ms_ent->fd_ref = 1;
     return TRUE;
 }
 
